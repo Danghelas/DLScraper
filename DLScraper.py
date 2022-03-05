@@ -5,11 +5,17 @@ import bs4
 import configparser
 import json
 import re
+import requests
 import os
 import pandas as pd
 from datetime import datetime
 from os import listdir
 from os.path import isfile, join, basename
+
+# User agent to be used for web scraping
+headers = {"User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36"}
+requestSession = requests.Session()
+requestSession.headers = headers
 
 def main():
     # Load config file
@@ -70,9 +76,13 @@ def main():
     totalTasks = len(scrapeList)
     print("Total tasks:" + str(totalTasks*2))
 
+    # Check current downloaded images
+    worksWithImages = __ScanForImages(configInfo)
+
     # Scrape the missing works
     if totalTasks > 0:
-        newWorkInfo = Scrape(scrapeList)
+        # Scrape info of new works from website, also download their cover images
+        newWorkInfo = Scrape(scrapeList, worksWithImages, configInfo)
         print(newWorkInfo)
 
         # Add new works to existing library
@@ -81,14 +91,10 @@ def main():
     else:
         print('no new products found')
 
-    # Check current downloaded images
-    worksWithImages = __ScanForImages(configInfo)
-
-    # Download images of new works
-    __DownloadImages(newLibrary, worksWithImages, configInfo)
+    
 
     # Save the newly created library to files
-    __SaveLibraryToFiles(newLibrary)
+    __SaveLibraryToFiles(newLibrary, configInfo)
 
     print("Sleeping to allow progress bar to catch up")
     time.sleep(1)
@@ -224,22 +230,22 @@ def __ReadExistingLibraryFile(library_indexed_info_path: str, file: str, fileNam
     else:
         return pd.DataFrame(columns =['DLCode', fileName])
 
-def Scrape(DLCodes: list):
+def Scrape(DLCodes: list, worksWithImages, configInfo):
     if not __CheckInput(DLCodes):
         urls = []
         for DLCode in DLCodes:
             urls.append(__GenerateURL(DLCode))
-        dfProductInfo = asyncio.get_event_loop().run_until_complete(__ScrapeMain(urls, DLCodes))
+        dfProductInfo = asyncio.get_event_loop().run_until_complete(__ScrapeMain(urls, DLCodes, worksWithImages, configInfo))
         return dfProductInfo
     else:
         print("Input not valid")
         
 
-async def __ScrapeMain(urls, DLCodes):
+async def __ScrapeMain(urls, DLCodes, worksWithImages, configInfo):
     async with aiohttp.ClientSession() as session:
         # ret contains list of dictionaries, each dictionary containing the info of one product
         # products without info are registered as a string in the list as "404"
-        ret = await asyncio.gather(*[__get(url, DLCodes[count], session) for count, url in enumerate(urls)])
+        ret = await asyncio.gather(*[__get(url, DLCodes[count], session, worksWithImages, configInfo) for count, url in enumerate(urls)])
         
         productsFiltered = [y for y in ret if y != "404"]
         return productsFiltered
@@ -251,14 +257,17 @@ def __convertToSoup(htmlBytes: bytes):
     soup = bs4.BeautifulSoup(htmlBytes, "html.parser")
     return soup
 
-async def __get(url, DLCode,  session: aiohttp.ClientSession, worksWithImages: list):
+async def __get(url, DLCode,  session: aiohttp.ClientSession, worksWithImages: list, configInfo):
     # Also download image of the work if it's missing
     try:
         async with session.get(url=url) as response:
             if response.status == 200:
                 soup = __convertToSoup(await response.read())
                 productAttributes = __getProductAttributes(soup, DLCode)
-                __DownloadImage(soup)
+                
+                # Check if image needs to be downloaded, or if it's already present in files
+                if DLCode not in worksWithImages:
+                    __DownloadImage(DLCode, soup, configInfo['images_path'])
                 print("Task done")
                 return productAttributes
                 #return __convertToSoup(await response.read())
@@ -271,17 +280,16 @@ async def __get(url, DLCode,  session: aiohttp.ClientSession, worksWithImages: l
         print("Unable to get url {} due to {}.".format(url, e.__class__))
         print("Task done")
 
-def __DownloadImage(DLCode, soupWebpage):
-    path = configInfo['images_path']
+def __DownloadImage(DLCode, soupWebpage, imagesPath):
         
-    img = webpage.find("li", {"class": "slider_item active"}).find("img")   
+    img = soupWebpage.find("li", {"class": "slider_item active"}).find("img")   
     src = img["srcset"]   
     lnk = "http:" + src
     
     extension = basename(lnk).split(".", 1)[1]
     filename = DLCode + "." + extension
     
-    saveLocation = path + '/'+ filename
+    saveLocation = imagesPath + '/'+ filename
     
     with open(saveLocation, "wb") as f:
         f.write(requests.get(lnk).content)
