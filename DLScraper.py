@@ -83,7 +83,7 @@ def main():
     if totalTasks > 0:
         # Scrape info of new works from website, also download their cover images
         newWorkInfo = Scrape(scrapeList, worksWithImages, configInfo)
-        print(newWorkInfo)
+        #print(newWorkInfo)
 
         # Add new works to existing library
         newLibrary = __AddWorksToLibrary(existingLibrary, newWorkInfo, dfFolderInfo)
@@ -102,7 +102,7 @@ def main():
 
 def __SaveLibraryToFiles(library: dict, configInfo: dict):
     library_indexed_info_path = configInfo['library_indexed_info_path']
-    for key, dfWorkProperty in library:
+    for key, dfWorkProperty in library.items():
         dfWorkProperty.to_json(library_indexed_info_path + key + '.json', orient='records')
 
 def __AddWorksToLibrary(library: dict, newWorkInfo: dict, dfFolderInfo: pd.DataFrame):
